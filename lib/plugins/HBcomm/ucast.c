@@ -452,6 +452,42 @@ ucast_write(struct hb_media* mp, void *pkt, int len)
 	return HA_OK;	
 }
 
+#if defined(SO_REUSEPORT)
+/*
+ *  Needed for OpenBSD for more than two nodes in a ucast cluster
+ */
+int setsockopt_reuseport(int sockfd)
+{
+	int one = 1;
+	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one)) == -1) {
+		/*
+		 * Linux learned SO_REUSEPORT only with kernel 3.9,
+		 * but some linux headers already define SO_REUSEPORT.
+		 * Which will result in ENOPROTOOPT, "Protocol not available"
+		 * on older kernels.
+		 * Failure to set SO_REUSEPORT is NOT critical in general.
+		 * It *may* be a problem on certain BSDs with more than
+		 * two nodes all using ucast.
+		 * Refusing to start because of failure to set SO_REUSEPORT is
+		 * not helpful for the vast majority of the clusters out there.
+		 */
+		if (errno == ENOPROTOOPT) {
+			PILCallLog(LOG, PIL_INFO,
+			  "ucast: setting option SO_REUSEPORT: %s", strerror(errno));
+		} else {
+			PILCallLog(LOG, PIL_CRIT,
+			  "ucast: error setting option SO_REUSEPORT: %s", strerror(errno));
+			return -1;
+		}
+	} else
+		PILCallLog(LOG, PIL_INFO, "ucast: set SO_REUSEPORT");
+	return 0;
+}
+#else
+#define setsockopt_reuseport(s)	0
+#endif
+
+
 /*
  * Set up socket for sending unicast UDP heartbeats
  */
@@ -508,23 +544,8 @@ static int HB_make_send_sock(struct hb_media *mp)
 			i.ifr_name);
 	}
 #endif
-#if defined(SO_REUSEPORT)
-	{
-		int one = 1;
-		/* this is for OpenBSD to allow multiple *
-		*  ucast connections, e.g. a more than   *
-		*  two node cluster 			 */
-
-		if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT,
-				&one, sizeof(one)) == -1) {
-			PILCallLog(LOG, PIL_CRIT,
-			  "ucast: error setting option SO_REUSEPORT(w): %s", strerror(errno));
-			close(sockfd);
-			return -1;
-		}
-		PILCallLog(LOG, PIL_INFO, "ucast: set SO_REUSEPORT(w)");
-	}
-#endif
+	if (setsockopt_reuseport(sockfd))
+		return -1;
 	if (fcntl(sockfd,F_SETFD, FD_CLOEXEC) < 0) {
 		PILCallLog(LOG, PIL_CRIT, "ucast: error setting close-on-exec flag: %s",
 			strerror(errno));
@@ -594,34 +615,8 @@ static int HB_make_receive_sock(struct hb_media *mp) {
 			i.ifr_name);
 	}
 #endif
-#if defined(SO_REUSEPORT)
-	/*
-	 *  Needed for OpenBSD for more than two nodes in a ucast cluster
-	 */
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT,
-			&one, sizeof(one)) == -1) {
-		/*
-		 * Linux learned SO_REUSEPORT only with kernel 3.9,
-		 * but some linux headers already define SO_REUSEPORT.
-		 * Which will result in ENOPROTOOPT, "Protocol not available"
-		 * on older kernels.
-		 * Failure to set SO_REUSEPORT is NOT critical in general.
-		 * It *may* be a problem on certain BSDs with more than
-		 * two nodes all using ucast.
-		 * Refusing to start because of failure to set SO_REUSEPORT is
-		 * not helpful for the vast majority of the clusters out there.
-		 */
-		if (errno == ENOPROTOOPT) {
-			PILCallLog(LOG, PIL_WARN,
-			  "ucast: error setting option SO_REUSEPORT: %s", strerror(errno));
-		} else {
-			PILCallLog(LOG, PIL_CRIT,
-			  "ucast: error setting option SO_REUSEPORT: %s", strerror(errno));
-			return -1;
-		}
-	} else
-		PILCallLog(LOG, PIL_INFO, "ucast: set SO_REUSEPORT");
-#endif
+	if (setsockopt_reuseport(sockfd))
+		return -1;
 
 	/* Try binding a few times before giving up */
 	/* Sometimes a process with it open is exiting right now */
