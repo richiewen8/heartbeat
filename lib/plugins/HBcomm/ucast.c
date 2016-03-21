@@ -456,7 +456,7 @@ ucast_write(struct hb_media* mp, void *pkt, int len)
 /*
  *  Needed for OpenBSD for more than two nodes in a ucast cluster
  */
-int setsockopt_reuseport(int sockfd)
+static int setsockopt_reuseport(int sockfd)
 {
 	int one = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one)) == -1) {
